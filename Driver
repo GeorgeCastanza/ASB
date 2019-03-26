@@ -1,0 +1,676 @@
+/**
+ *  Copyright 2018 LeeF Automation
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+ *  in compliance with the License. You may obtain a copy of the License at:
+ *
+ *	  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed
+ *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
+ *  for the specific language governing permissions and limitations under the License.
+ *
+ *  Alarm Bridge Controller
+ *
+ *  Author: LeeF Automation
+ *  Date: 2018-05-06
+ *
+ *  Special thanks to CJCharles who created the Visonic alarm system integration that this device handler is evolved from
+ */
+
+import groovy.json.JsonSlurper
+
+metadata
+{
+	definition (name: "Alarm System Bridge v2", namespace: "George", author: "George")
+	{
+		capability "Refresh"
+		capability "Configuration"
+		capability "Alarm"
+		capability "Polling"
+       		capability "PushableButton"
+		capability "Switch"
+		
+		attribute "device.status", "string"
+		attribute "armaway", "string"
+		attribute "armhome", "string"
+		attribute "disarm", "string"
+		attribute "alarm", "enum"
+		attribute "lastaction", "string"
+        attribute "buttonPressed", "String"
+		attribute "switch","ENUM",["AlarmArmAway", "AlarmArmHome", "AlarmDisarm"]
+		
+		command "AlarmArmAway"
+		command "AlarmArmHome"
+		command "AlarmDisarm"
+		command "AlarmTrigger"
+		
+		command "ZoneCreateZoneDevices"
+		command "ZoneRemoveZoneDevices"
+		command "ZoneTestFunction"
+		
+		command "updateZonesNS"
+		command "stop"
+		command "off"
+		command "strobe"
+		command "siren"
+		command "both"
+	}
+}
+	
+	preferences {
+		input name: "ip", type: "string", title:"Alarm IP Address", description: "e.g. 192.168.1.10", required: true, displayDuringSetup: true
+		input name: "prename", type: "string", title:"Add before zone name", description: "e.g. 'Zone' would give 'Zone Kitchen'", required: false, displayDuringSetup: true
+		input name: "postname", type: "string", title:"Add after zone name", description: "e.g. 'Zone' would give 'Kitchen Zone'", required: false, displayDuringSetup: true
+		input name: "inactivityseconds", type: "string", title:"Motion sensor inactivity timeout", description: "override the default of 20s (60s max)", required: false, displayDuringSetup: false
+		input name: "password", type: "password", title:"Password", required:false, displayDuringSetup:false
+		input name: "debugOutput", type: "bool", title: "Enable debug logging?", defaultValue: true
+
+	main(["AlarmStatus"])
+	details(["AlarmStatus", "AlarmArmAway", "AlarmArmHome", "AlarmDisarm",
+			 
+			 // Add all your zones here (zonenameX first then zoneX)- e.g. add "zonename29", "zone29" if you want to display zone 29 in the alarm panel
+			 "zonename1", "zone1", "zonename2", "zone2", "zonename3", "zone3", "zonename4", "zone4",
+			 "zonename5", "zone5", "zonename6", "zone6", "zonename7", "zone7", "zonename8", "zone8", 
+			 
+			 "refresh", "configure", "ip", "alarm", "createtile", "removetile"
+			 , "testtile" //If you have trouble creating your child zones you can uncomment the start of this line (remove // before the comma)
+			 				//After pressing the "test_function" button on your phone you can re-comment it, to tidy up your alarm panel device.
+							//This is only needed if you have trouble creating your zones.
+			 ])
+}
+
+def AlarmArmAway()
+{
+	// Send an arm away command to the alarm and log that it is changing
+	logDebug "armaway()"
+	sendEvent(name: "armaway", value: "changing")
+	sendEvent(name: "armhome", value: "inactive", displayed: false)
+	sendEvent(name: "disarm", value: "inactive", displayed: false)
+	getAction("/armaway")
+}
+
+def AlarmArmHome()
+{
+	// Send an arm home command to the alarm and log that it is changing
+	logDebug "armhome()"
+	sendEvent(name: "armaway", value: "inactive", displayed: false)
+	sendEvent(name: "armhome", value: "changing")
+	sendEvent(name: "disarm", value: "inactive", displayed: false)
+	getAction("/armhome")
+}
+
+// This will only work if the appropriate output from the trigger module is connected to a zone wired as a keyswitch zone
+def AlarmDisarm()
+{
+	// Send a disarm command to the alarm and log that it is changing
+	 
+	logDebug "disarm()"
+	sendEvent(name: "armaway", value: "inactive", displayed: false)
+	sendEvent(name: "armhome", value: "inactive", displayed: false)
+	sendEvent(name: "disarm", value: "changing")
+	getAction("/disarm")
+}
+
+
+def AlarmTrigger()
+{
+	logDebug "Triggering alarm"
+	getAction("/triggeralarm?output=7")
+}
+
+def logsOff(){
+log.warn "debug logging disabled..."
+device.updateSetting("debugOutput",[value:"false",type:"bool"])
+}
+
+private logDebug(msg) {
+if (settings?.debugOutput || settings?.debugOutput == null) {
+log.debug "$msg"
+}
+}
+
+
+def ZoneCreateZoneDevices()
+{
+	// This will create child devices
+	// The child devices are created in the handler for the /getzonenames response
+	logDebug "Requesting List of Alarm Zones"
+	getAction("/getzonenames")
+}
+
+def ZoneRemoveZoneDevices()
+{
+	// This will remove all child devices
+	logDebug "Removing Child Zone Devices"
+	try
+	{
+		getChildDevices()?.each
+		{
+			try
+			{
+				deleteChildDevice(it.deviceNetworkId)
+			}
+			catch (e)
+			{
+				logDebug "Error deleting ${it.deviceNetworkId}, probably locked into a SmartApp: ${e}"
+			}
+		}
+	}
+	catch (err)
+	{
+		logDebug "Either no child devices exist or there was an error finding child devices: ${err}"
+	}
+}
+
+
+def ZoneTestFunction()
+{
+	// This function creates a test device, which may be needed due to some random problems that exist when creating child devices
+	// due to issues in the SmartThings API
+	// logDebug "Got here inside the test function"
+	logDebug prename
+	if (device.currentValue("createzonedevices") == "cancreatezonedevices")
+	{
+		logDebug "state correct"
+	}
+	
+	try
+	{
+		def curdevice = getChildDevices()?.find { it.deviceNetworkId == "alarmchildzonetest"}
+		if (curdevice)
+		{
+			//Do nothing as we already have a test device
+		}
+		else
+		{
+			addChildDevice("smartthings", "Motion Detector", "alarmchildzonetest", device.hub.id, [name: "alarm zone test device", label: "Alarm Zone Test Device", completedSetup: true])
+		}
+	} 
+	catch (e)
+	{
+		log.error "Couldnt find device, probably doesn't exist so safe to add a new one: ${e}"
+		addChildDevice("smartthings", "Motion Detector", "alarmchildzonetest", device.hub.id, [name: "alarm zone test device", label: "Alarm Zone Test Device", completedSetup: true])
+	}
+}
+
+
+// This will configure the device to talk to SmartThings
+def configure()
+{
+	def cmds = []
+	logDebug "Configuring Alarm (getting zones+types, configuring IP/port/timeout)"
+	cmds << getAction("/status")
+	
+	def requeststring = "/config?ip_for_st=${device.hub.getDataValue("localIP")}&port_for_st=${device.hub.getDataValue("localSrvPortTCP")}"
+	
+	if (inactivityseconds?.isInteger())
+	{
+		// Inactivityseconds is both populated and an integer, so lets send it to the Wemos
+		requeststring = requeststring + "&inactivity_seconds=${settings.inactivityseconds}"
+	}
+	
+	// logDebug requeststring
+	// Send the details to SmartThings
+	cmds << getAction(requeststring)
+	return cmds
+}
+
+def refresh()
+{
+	logDebug "refresh()"
+	// SendEvents should be before any getAction, otherwise getAction does nothing
+	sendEvent(name: "ip", value: device.hub.getDataValue("localIP")+"\r\nPort: "+device.hub.getDataValue("localSrvPortTCP"), displayed: true)
+	// Now refresh Alarm status
+	getAction("/refresh")
+	// getAction("/getzonenames")
+}
+
+def installed()
+{
+	logDebug "installed()"
+	//configure()
+}
+
+def updated()
+{
+	logDebug "updated()"
+	configure()
+	unschedule()
+    	if (debugOutput) runIn(1800,logsOff)
+}
+
+def ping()
+{
+	logDebug "ping()"
+	getAction("/ping")
+}
+
+// These functions are needed due to the alarm device capability and hence will serve to arm/disarm the alarm (though unlikely to be called)
+def stop()
+{
+	// Disarming the alarm system via SmartThings is currently disabled
+	AlarmDisarm()
+}
+
+def off()
+{
+	// Disarming the alarm system via SmartThings is currently disabled
+	AlarmDisarm()
+}
+
+def strobe()
+{
+	AlarmArmHome()
+}
+
+def siren()
+{
+	AlarmArmAway()
+}
+
+def both()
+{
+	AlarmTrigger()
+}
+
+def parse(description)
+{
+	def map = [:]
+	def events = []
+	def cmds = []
+	
+	if(description == "updated") return
+	def descMap = parseDescriptionAsMap(description)
+	
+	if (descMap == null)
+	{
+		logDebug "Not valid json response/message"
+		logDebug description
+		return
+	}
+	
+	def body = new String(descMap["body"].decodeBase64())
+
+	def slurper = new JsonSlurper()
+	def result;
+	try
+	{
+		result = slurper.parseText(body)
+	}
+	catch (e)
+	{
+		logDebug "Invalid response from system: " + body
+		return
+	}
+	
+	// Received an alarm stat string so update tile status but dont display it since the event string below will be logged
+	if (result.containsKey("stat_str"))
+	{
+ 		handleAlarmStatus(result.stat_str)
+	}
+	
+	// If we receive a key containing 'stat_update_from' then it is an alarm status so add it to the event log and update tile
+	if (result.containsKey("stat_update_from"))
+	{
+		def dateTime = new Date()
+		def sensorStateChangedDate = dateTime.format("yyyy-MM-dd HH:mm", location.timeZone)
+		def status_string = result.stat_str + " by " + result.stat_update_from + " at " + sensorStateChangedDate
+		// Send the status string that we have built
+		sendEvent(name: "events", value: "${status_string}", displayed: true, isStateChange: true)
+	}
+	
+	if (result.containsKey("zone_status"))
+	{
+		handleZoneStatus(result.zone_id, result.zone_status)
+	}
+	
+	// This code will pull zone information out of the /getzonenamespage (and allows for zones not in order)
+	if (result.containsKey("maxzoneid"))
+	{
+		logDebug "Handling getzonenames page"
+		handleCreateZones(result.zones)
+	}
+}
+
+
+private handleAlarmStatus(statusString)
+{
+	switch (statusString)
+	{
+		case ["Disarmed", "Disarm", "Ready"]:
+			sendEvent(name: "disarm", value: "active", displayed: false)
+			sendEvent(name: "armaway", value: "inactive", displayed: false)
+			sendEvent(name: "armhome", value: "inactive", displayed: false)
+			sendEvent(name: "status", value: "disarmed", displayed: false)
+			sendEvent(name: "alarm", value: "off", displayed: false)
+			logDebug "Disarmed Status found"
+			break
+				
+		case ["Not Ready"]:
+			sendEvent(name: "disarm", value: "inactive", displayed: false)
+			sendEvent(name: "armaway", value: "inactive", displayed: false)
+			sendEvent(name: "armhome", value: "inactive", displayed: false)
+			sendEvent(name: "status", value: "disarmed", displayed: false)
+			sendEvent(name: "alarm", value: "off", displayed: false)
+			logDebug "Not-ready Status found"
+			break
+
+		case ["Armed Away", "Arm Away"]:
+			sendEvent(name: "disarm", value: "inactive", displayed: false)
+			sendEvent(name: "armaway", value: "active", displayed: false)
+			sendEvent(name: "armhome", value: "inactive", displayed: false)
+			sendEvent(name: "status", value: "away", displayed: false)
+			sendEvent(name: "alarm", value: "siren", displayed: false)
+			logDebug "Armed Away Status found"
+			break
+
+		case ["Armed Home", "Arm Home"]:
+			sendEvent(name: "disarm", value: "inactive", displayed: false)
+			sendEvent(name: "armaway", value: "inactive", displayed: false)
+			sendEvent(name: "armhome", value: "active", displayed: false)
+			sendEvent(name: "status", value: "home", displayed: false)
+			sendEvent(name: "alarm", value: "strobe", displayed: false)
+			logDebug "Armed Home Status found"
+			break
+
+		case ["Exit Delay"]:
+			sendEvent(name: "disarm", value: "inactive", displayed: false)
+			sendEvent(name: "armaway", value: "changing")
+			sendEvent(name: "armhome", value: "inactive", displayed: false)
+			logDebug "Exit Delay Status found"
+			break
+ 
+		case ["Delay Alarm", "Confirm Alarm"]:
+			sendEvent(name: "disarm", value: "inactive", displayed: false)
+			sendEvent(name: "armaway", value: "inactive", displayed: false)
+			sendEvent(name: "armhome", value: "inactive", displayed: false)
+			sendEvent(name: "status", value: "alarm", displayed: false)
+			sendEvent(name: "alarm", value: "both", displayed: false)
+			logDebug "Alarm Status found - Uh Oh!!"
+			break
+
+		default:
+			logDebug "Unknown Alarm state received = ${result.stat_str}"
+			break
+	}
+}
+
+private handleZoneStatus(zoneId, zoneStatus)
+{
+	def thisZoneDeviceId = "alarmchildzone"+zoneId
+	def curdevice = null
+	try
+	{
+		// Got a zone status so first try to find the correct child device
+		curdevice = getChildDevices()?.find { it.deviceNetworkId == thisZoneDeviceId }
+	}
+	catch (e)
+	{
+		logDebug "Failed to find child zone for zone " + zoneId + "exception ${e}"
+	}
+
+	if (curdevice == null)
+	{
+		logDebug "Failed to find child device for zone: " + zoneId + " expecting " + thisZoneDeviceId
+		/*
+		def children = getChildDevices()
+
+		logDebug "device has ${children.size()} children"
+		children.each { child ->
+		logDebug "child ${child.displayName} has deviceNetworkId ${child.deviceNetworkId}"
+		}
+		*/
+	}
+	else
+	{
+		// Check the device type for this child, since the different child device types need different event types
+		boolean isMotionDevice = (curdevice.capabilities.find { it.name == "Virtual Motion Sensor" } != null)
+		boolean isSmokeDevice = (curdevice.capabilities.find { it.name == "Smoke Detector" } != null)
+
+		// Handle the specific zone status result
+		switch (zoneStatus)
+		{				  
+			case "Active":
+				logDebug "Got Active zone: " + zoneId + ", which is called - " + curdevice
+				if (isMotionDevice)
+				{
+					sendEvent(name: "panelzone"+zoneId, value: "active", displayed: true, isStateChange: true)
+					curdevice?.sendEvent(name: "motion", value: "active")
+				}
+				else if (isSmokeDevice)
+				{
+					sendEvent(name: "panelzone"+zoneId, value: "smoke", displayed: false, isStateChange: true)
+					curdevice?.sendEvent(name: "smoke", value: "detected")					
+				}
+				else
+				{
+					sendEvent(name: "panelzone"+zoneId, value: "open", displayed: false, isStateChange: true)
+					curdevice?.sendEvent(name: "motion", value: "active")
+				}
+				break					
+
+			case "Inactive":
+				logDebug "Got Inactive zone: " + zoneId + ", which is called - " + curdevice
+				if (isMotionDevice)
+				{
+					sendEvent(name: "panelzone"+zoneId, value: "inactive", displayed: true, isStateChange: true)
+					curdevice?.sendEvent(name: "motion", value: "inactive")
+				}
+				else if (isSmokeDevice)
+				{
+					sendEvent(name: "panelzone"+zoneId, value: "clear", displayed: false, isStateChange: true)
+					curdevice?.sendEvent(name: "smoke", value: "clear")					
+				}
+				else
+				{
+					sendEvent(name: "panelzone"+zoneId, value: "closed", displayed: false, isStateChange: true)
+					curdevice?.sendEvent(name: "motion", value: "inactive")
+							}
+				break 			
+
+			case "Bypassed - Active":
+				logDebug "Got Active Bypassed zone: " + zoneId + ", which is called - " + curdevice
+				sendEvent(name: "panelzone"+zoneId, value: "bypass", displayed: false, isStateChange: true)
+				if (isMotionDevice)
+				{
+					curdevice?.sendEvent(name: "motion", value: "active")
+				}
+				else if (isSmokeDevice)
+				{
+					curdevice?.sendEvent(name: "smoke", value: "detected")					
+				}
+				else
+				{
+					curdevice?.sendEvent(name: "motion", value: "active")
+				}
+				break
+
+			case "Bypassed - Inactive":
+				logDebug "Got Inactive Bypassed zone: " + zoneId + ", which is called - " + curdevice
+				sendEvent(name: "panelzone"+zoneId, value: "bypass", displayed: false, isStateChange: true)
+				if (isMotionDevice)
+				{
+					curdevice?.sendEvent(name: "motion", value: "inactive")
+				}
+				else if (isSmokeDevice)
+				{
+					curdevice?.sendEvent(name: "smoke", value: "clear")					
+				}
+				else
+				{
+					curdevice?.sendEvent(name: "motion", value: "inactive")
+				}
+				break
+
+			case "Tamper":
+				logDebug "Got Tamper for zone: " + zoneId + ", which is called - " + curdevice
+				// We'll set it to open for now, since at least that gives an indication something is wrong!
+				if (isMotionDevice)
+				{
+					sendEvent(name: "panelzone"+zoneId, value: "active", displayed: false, isStateChange: true)
+					curdevice?.sendEvent(name: "motion", value: "active")
+				}
+				else if (isSmokeDevice)
+				{
+					sendEvent(name: "panelzone"+zoneId, value: "smoke", displayed: false, isStateChange: true)
+					curdevice?.sendEvent(name: "smoke", value: "detected")					
+				}
+				else
+				{
+					sendEvent(name: "panelzone"+zoneId, value: "open", displayed: false, isStateChange: true)
+					curdevice?.sendEvent(name: "contact", value: "open")
+				}
+				break
+
+			default:
+				logDebug "Unknown status received: ${zoneId} is ${zoneStatus}"
+				break
+		}
+	}
+}
+
+private handleCreateZones(zones)
+{
+	for (def curzone in zones)
+	{
+		// First update the name of the tile on this device
+		sendEvent(name: "panelzonename"+(curzone.zoneid), value: curzone.zonename)
+
+		// Now setup the prepend and postpend names for the new child zone device
+		def thiszonename = ""
+		if (prename != null) {thiszonename = thiszonename + prename + " "}
+		thiszonename = thiszonename + curzone.zonename
+		if (postname != null) {thiszonename = thiszonename + " " + postname}
+				
+		logDebug "Trying to add child with name: ${thiszonename}, ID: alarmchildzone${curzone.zoneid} to ${device.hub.id}"
+
+		// Now try to find a child device with the right name - exception handler needed in case it fails to find any children
+		try
+		{
+			def curchildzone = getChildDevices()?.find { it.deviceNetworkId == "alarmchildzone${curzone.zoneid}"}
+		}
+		catch (e)
+		{
+			// Would reach here if it cant find any children or that child doesnt exist so we can try and create it
+			logDebug "Couldnt find device, probably doesn't exist so safe to add a new one: ${e}"
+		}
+
+		// If we don't have a matching child already, and the name isn't Unknown, then we can finally start creating the child device
+		if ((curchildzone == null) && (curzone.zonename != "Unknown"))
+		{
+			try
+			{
+				switch (curzone.zonetype)
+				{
+					case ["Magnet", "Contact", "Entry/Exit"]:
+						// If it is a magnetic sensor then add it as a contact sensor
+						addChildDevice("hubitat", "Virtual Motion Sensor", "alarmchildzone${curzone.zoneid}", [name: thiszonename, isComponent: false])
+						logDebug "Created contact zone child device"
+						break
+
+					case ["Motion", "Interior", "Wired"]:
+						// If it is a motion or interior sensor then add it as a motion detector device
+						addChildDevice("hubitat", "Virtual Motion Sensor", "alarmchildzone${curzone.zoneid}", [name: thiszonename, isComponent: false])
+						logDebug "Created motion zone child device"
+						break
+
+					case ["Smoke", "Fire"]:
+						try
+						{
+							addChildDevice("leefauto", "Smoke Detector", "alarmchildzone${curzone.zoneid}", device.hub.id, [name: thiszonename])
+						}
+						catch (e)
+						{
+							logDebug "Couldn't create Smoke Detector child device. Is device handler installed ? Creating motion detector zone instead."
+							addChildDevice("smartthings", "Motion Detector", "alarmchildzone${curzone.zoneid}", device.hub.id, [name: thiszonename])
+						}
+						logDebug "Created Smoke Alarm zone child device"
+						break
+						
+					case ["Shock", "Vibration", "Gas", "Panic", "KeySwitch"]:
+						// Add the remainders as motion detectors for now - unfortunately this will display motion/no-motion instead of active/inactive 
+						addChildDevice("smartthings", "Motion Detector", "alarmchildzone${curzone.zoneid}", device.hub.id, [name: thiszonename])
+						logDebug "Create motion zone child device for non-motion zone"
+						break
+
+					default:
+						logDebug "Unknown sensor found, we'll have to ignore for now"
+						break
+				}
+			}
+			catch (e)
+			{
+				log.error "Couldnt add device, probably already exists: ${e}"
+			}
+		}
+	}
+}
+
+private getAction(uri)
+{ 
+	logDebug "uri ${uri}"
+	updateDNI()
+
+	def userpass
+
+	if(password != null && password != "") 
+		userpass = encodeCredentials("admin", password)
+	
+	def headers = getHeader(userpass)
+  
+	def hubAction = new hubitat.device.HubAction(
+		method: "GET",
+		path: uri,
+		headers: headers
+		)
+	return hubAction	
+}
+
+def parseDescriptionAsMap(description)
+{
+	description.split(",").inject([:])
+	{
+		map, param ->
+		def nameAndValue = param.split(":")
+		if (nameAndValue.size() > 1)
+			map += [(nameAndValue[0].trim()):nameAndValue[1].trim()]
+	}
+}
+
+private getHeader(userpass = null)
+{
+	def headers = [:]
+	headers.put("Host", getHostAddress())
+	headers.put("Content-Type", "application/x-www-form-urlencoded")
+	if (userpass != null)
+	   headers.put("Authorization", userpass)
+	return headers
+}
+
+private encodeCredentials(username, password)
+{
+	def userpassascii = "${username}:${password}"
+	def userpass = "Basic " + userpassascii.bytes.encodeBase64().toString()
+	return userpass
+}
+
+private updateDNI()
+{ 
+	if (state.dni != null && state.dni != "" && device.deviceNetworkId != state.dni)
+	{
+	   device.deviceNetworkId = state.dni
+	}
+}
+
+private getHostAddress()
+{
+	if(getDeviceDataByName("ip") && getDeviceDataByName("port"))
+	{
+		return "${getDeviceDataByName("ip")}:${getDeviceDataByName("port")}"
+	}
+	else
+	{
+		return "${ip}:80"
+	}
+}
