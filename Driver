@@ -22,13 +22,13 @@ import groovy.json.JsonSlurper
 
 metadata
 {
-	definition (name: "Alarm System Bridge v2", namespace: "George", author: "George")
+	definition (name: "Alarm System Bridge v2.1", namespace: "George", author: "George")
 	{
 		capability "Refresh"
 		capability "Configuration"
 		capability "Alarm"
 		capability "Polling"
-       		capability "PushableButton"
+       	capability "PushableButton"
 		capability "Switch"
 		
 		attribute "device.status", "string"
@@ -88,7 +88,7 @@ def AlarmArmAway()
 	sendEvent(name: "armhome", value: "inactive", displayed: false)
 	sendEvent(name: "disarm", value: "inactive", displayed: false)
 	getAction("/armaway")
-}
+	}
 
 def AlarmArmHome()
 {
@@ -98,7 +98,7 @@ def AlarmArmHome()
 	sendEvent(name: "armhome", value: "changing")
 	sendEvent(name: "disarm", value: "inactive", displayed: false)
 	getAction("/armhome")
-}
+	}
 
 // This will only work if the appropriate output from the trigger module is connected to a zone wired as a keyswitch zone
 def AlarmDisarm()
@@ -110,8 +110,7 @@ def AlarmDisarm()
 	sendEvent(name: "armhome", value: "inactive", displayed: false)
 	sendEvent(name: "disarm", value: "changing")
 	getAction("/disarm")
-}
-
+	}
 
 def AlarmTrigger()
 {
@@ -317,7 +316,7 @@ def parse(description)
 		def sensorStateChangedDate = dateTime.format("yyyy-MM-dd HH:mm", location.timeZone)
 		def status_string = result.stat_str + " by " + result.stat_update_from + " at " + sensorStateChangedDate
 		// Send the status string that we have built
-		sendEvent(name: "events", value: "${status_string}", displayed: true, isStateChange: true)
+	//	sendEvent(name: "events", value: "${status_string}", displayed: true, isStateChange: true)
 	}
 	
 	if (result.containsKey("zone_status"))
@@ -339,59 +338,65 @@ private handleAlarmStatus(statusString)
 	switch (statusString)
 	{
 		case ["Disarmed", "Disarm", "Ready"]:
+       if (device.currentValue('disarm') != 'active')
+     {
 			sendEvent(name: "disarm", value: "active", displayed: false)
 			sendEvent(name: "armaway", value: "inactive", displayed: false)
 			sendEvent(name: "armhome", value: "inactive", displayed: false)
 			sendEvent(name: "status", value: "disarmed", displayed: false)
-			sendEvent(name: "alarm", value: "off", displayed: false)
-			logDebug "Disarmed Status found"
+        	sendEvent(name: "alarm", value: "off", displayed: false)
+			log.info "Alarm disarmed"
 			break
-				
+        }	
+        
 		case ["Not Ready"]:
-			sendEvent(name: "disarm", value: "inactive", displayed: false)
-			sendEvent(name: "armaway", value: "inactive", displayed: false)
-			sendEvent(name: "armhome", value: "inactive", displayed: false)
-			sendEvent(name: "status", value: "disarmed", displayed: false)
-			sendEvent(name: "alarm", value: "off", displayed: false)
-			logDebug "Not-ready Status found"
+	//		sendEvent(name: "disarm", value: "inactive", displayed: false)
+	//		sendEvent(name: "armaway", value: "inactive", displayed: false)
+	//		sendEvent(name: "armhome", value: "inactive", displayed: false)
+	//		sendEvent(name: "status", value: "disarmed", displayed: false)
+	//		sendEvent(name: "alarm", value: "off", displayed: false)
+	//		logDebug "Not-ready Status found"
 			break
 
 		case ["Armed Away", "Arm Away"]:
+        
 			sendEvent(name: "disarm", value: "inactive", displayed: false)
 			sendEvent(name: "armaway", value: "active", displayed: false)
 			sendEvent(name: "armhome", value: "inactive", displayed: false)
 			sendEvent(name: "status", value: "away", displayed: false)
 			sendEvent(name: "alarm", value: "siren", displayed: false)
-			logDebug "Armed Away Status found"
+			log.info "Alarmed armed away"
 			break
-
+        
 		case ["Armed Home", "Arm Home"]:
+       
 			sendEvent(name: "disarm", value: "inactive", displayed: false)
 			sendEvent(name: "armaway", value: "inactive", displayed: false)
 			sendEvent(name: "armhome", value: "active", displayed: false)
 			sendEvent(name: "status", value: "home", displayed: false)
 			sendEvent(name: "alarm", value: "strobe", displayed: false)
-			logDebug "Armed Home Status found"
-			break
-
+			log.info "Alarm armed Home"
+		   	break
+        
 		case ["Exit Delay"]:
 			sendEvent(name: "disarm", value: "inactive", displayed: false)
 			sendEvent(name: "armaway", value: "changing")
 			sendEvent(name: "armhome", value: "inactive", displayed: false)
-			logDebug "Exit Delay Status found"
+            sendEvent(name: "alarm", value: "exit delay", displayed: false)
+			log.info "House arming away..."
 			break
  
 		case ["Delay Alarm", "Confirm Alarm"]:
-			sendEvent(name: "disarm", value: "inactive", displayed: false)
-			sendEvent(name: "armaway", value: "inactive", displayed: false)
-			sendEvent(name: "armhome", value: "inactive", displayed: false)
-			sendEvent(name: "status", value: "alarm", displayed: false)
-			sendEvent(name: "alarm", value: "both", displayed: false)
-			logDebug "Alarm Status found - Uh Oh!!"
+	//		sendEvent(name: "disarm", value: "inactive", displayed: false)
+	//		sendEvent(name: "armaway", value: "inactive", displayed: false)
+	//		sendEvent(name: "armhome", value: "inactive", displayed: false)
+	//		sendEvent(name: "status", value: "alarm", displayed: false)
+	//		sendEvent(name: "alarm", value: "both", displayed: false)
+	//		logDebug "Alarm Status found - Uh Oh!!"
 			break
 
 		default:
-			logDebug "Unknown Alarm state received = ${result.stat_str}"
+			logDebug "Unknown Alarm state received = ${stat_str}"
 			break
 	}
 }
@@ -435,17 +440,17 @@ private handleZoneStatus(zoneId, zoneStatus)
 				logDebug "Got Active zone: " + zoneId + ", which is called - " + curdevice
 				if (isMotionDevice)
 				{
-					sendEvent(name: "panelzone"+zoneId, value: "active", displayed: true, isStateChange: true)
+			//		sendEvent(name: "panelzone"+zoneId, value: "active", displayed: true, isStateChange: true)
 					curdevice?.sendEvent(name: "motion", value: "active")
 				}
 				else if (isSmokeDevice)
 				{
-					sendEvent(name: "panelzone"+zoneId, value: "smoke", displayed: false, isStateChange: true)
+			//		sendEvent(name: "panelzone"+zoneId, value: "smoke", displayed: false, isStateChange: true)
 					curdevice?.sendEvent(name: "smoke", value: "detected")					
 				}
 				else
 				{
-					sendEvent(name: "panelzone"+zoneId, value: "open", displayed: false, isStateChange: true)
+			//		sendEvent(name: "panelzone"+zoneId, value: "open", displayed: false, isStateChange: true)
 					curdevice?.sendEvent(name: "motion", value: "active")
 				}
 				break					
@@ -454,24 +459,24 @@ private handleZoneStatus(zoneId, zoneStatus)
 				logDebug "Got Inactive zone: " + zoneId + ", which is called - " + curdevice
 				if (isMotionDevice)
 				{
-					sendEvent(name: "panelzone"+zoneId, value: "inactive", displayed: true, isStateChange: true)
+			//		sendEvent(name: "panelzone"+zoneId, value: "inactive", displayed: true, isStateChange: true)
 					curdevice?.sendEvent(name: "motion", value: "inactive")
 				}
 				else if (isSmokeDevice)
 				{
-					sendEvent(name: "panelzone"+zoneId, value: "clear", displayed: false, isStateChange: true)
+			//		sendEvent(name: "panelzone"+zoneId, value: "clear", displayed: false, isStateChange: true)
 					curdevice?.sendEvent(name: "smoke", value: "clear")					
 				}
 				else
 				{
-					sendEvent(name: "panelzone"+zoneId, value: "closed", displayed: false, isStateChange: true)
+			//		sendEvent(name: "panelzone"+zoneId, value: "closed", displayed: false, isStateChange: true)
 					curdevice?.sendEvent(name: "motion", value: "inactive")
 							}
 				break 			
 
 			case "Bypassed - Active":
 				logDebug "Got Active Bypassed zone: " + zoneId + ", which is called - " + curdevice
-				sendEvent(name: "panelzone"+zoneId, value: "bypass", displayed: false, isStateChange: true)
+			//	sendEvent(name: "panelzone"+zoneId, value: "bypass", displayed: false, isStateChange: true)
 				if (isMotionDevice)
 				{
 					curdevice?.sendEvent(name: "motion", value: "active")
@@ -488,7 +493,7 @@ private handleZoneStatus(zoneId, zoneStatus)
 
 			case "Bypassed - Inactive":
 				logDebug "Got Inactive Bypassed zone: " + zoneId + ", which is called - " + curdevice
-				sendEvent(name: "panelzone"+zoneId, value: "bypass", displayed: false, isStateChange: true)
+			//	sendEvent(name: "panelzone"+zoneId, value: "bypass", displayed: false, isStateChange: true)
 				if (isMotionDevice)
 				{
 					curdevice?.sendEvent(name: "motion", value: "inactive")
@@ -508,17 +513,17 @@ private handleZoneStatus(zoneId, zoneStatus)
 				// We'll set it to open for now, since at least that gives an indication something is wrong!
 				if (isMotionDevice)
 				{
-					sendEvent(name: "panelzone"+zoneId, value: "active", displayed: false, isStateChange: true)
+			//		sendEvent(name: "panelzone"+zoneId, value: "active", displayed: false, isStateChange: true)
 					curdevice?.sendEvent(name: "motion", value: "active")
 				}
 				else if (isSmokeDevice)
 				{
-					sendEvent(name: "panelzone"+zoneId, value: "smoke", displayed: false, isStateChange: true)
+			//		sendEvent(name: "panelzone"+zoneId, value: "smoke", displayed: false, isStateChange: true)
 					curdevice?.sendEvent(name: "smoke", value: "detected")					
 				}
 				else
 				{
-					sendEvent(name: "panelzone"+zoneId, value: "open", displayed: false, isStateChange: true)
+			//		sendEvent(name: "panelzone"+zoneId, value: "open", displayed: false, isStateChange: true)
 					curdevice?.sendEvent(name: "contact", value: "open")
 				}
 				break
